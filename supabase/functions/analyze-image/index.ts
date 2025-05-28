@@ -1,4 +1,3 @@
-
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
@@ -130,7 +129,9 @@ async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) 
           content: `You are an expert at creating compelling marketplace listings (like Facebook Marketplace, Craigslist, etc.). 
           Create listings that are honest, appealing, and likely to sell quickly. 
           Always maintain a friendly, trustworthy tone. Focus on benefits and condition.
-          Respond with a JSON object containing: title, description, category, and estimatedPrice.`
+          
+          IMPORTANT: Respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or additional text.
+          The JSON must contain exactly these fields: title, description, category, and estimatedPrice.`
         },
         {
           role: 'user',
@@ -150,18 +151,38 @@ async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) 
 
   try {
     const content = data.choices[0].message.content;
-    const parsed = JSON.parse(content);
+    console.log('Raw OpenAI response:', content);
+    
+    const cleanedContent = cleanJsonResponse(content);
+    console.log('Cleaned OpenAI response:', cleanedContent);
+    
+    const parsed = JSON.parse(cleanedContent);
+    
+    // Validate required fields
+    if (!parsed.title || !parsed.description || !parsed.category || !parsed.estimatedPrice) {
+      throw new Error('Missing required fields in OpenAI response');
+    }
     
     return {
-      title: parsed.title || 'Quality Item for Sale',
-      description: parsed.description || 'Great item in good condition!',
-      category: parsed.category || 'Home & Garden',
-      price: parsed.estimatedPrice || '$25',
+      title: parsed.title,
+      description: parsed.description,
+      category: parsed.category,
+      price: parsed.estimatedPrice,
       detectedItems: analysis.labels.slice(0, 5).map(l => l.description)
     };
   } catch (parseError) {
+    console.error('Parse error details:', parseError);
+    console.error('Content that failed to parse:', data.choices[0].message.content);
     throw new Error(`Failed to parse LLM response: ${parseError.message}`);
   }
+}
+
+function cleanJsonResponse(content: string): string {
+  // Remove markdown code block syntax
+  return content
+    .replace(/```json\s*/g, '')
+    .replace(/```\s*/g, '')
+    .trim();
 }
 
 function createEnhancedPrompt(analysis: VisionAnalysis): string {
