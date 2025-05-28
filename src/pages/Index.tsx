@@ -100,10 +100,10 @@ Price: ${listingData.price}`;
             <Sparkles className="text-white w-8 h-8" />
           </div>
           <h1 className="text-2xl font-bold text-gray-800 mb-2">
-            Hey Sarah! 👋
+            AI Listing Assistant 🚀
           </h1>
           <p className="text-gray-600">
-            Let's turn that clutter into cash with a perfect listing!
+            Turn your items into perfect marketplace listings in seconds!
           </p>
         </div>
 
@@ -252,7 +252,7 @@ Price: ${listingData.price}`;
 
         {/* Footer */}
         <div className="text-center text-sm text-gray-500 mt-8">
-          <p>Made with ❤️ to help busy moms sell smarter</p>
+          <p>Made with ❤️ to help make selling easier</p>
         </div>
       </div>
     </div>
