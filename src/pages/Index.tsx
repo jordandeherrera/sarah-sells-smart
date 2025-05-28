@@ -1,9 +1,9 @@
-
 import { useState } from 'react';
 import { Camera, Upload, Sparkles, Copy, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 const Index = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -32,31 +32,51 @@ const Index = () => {
     
     setIsAnalyzing(true);
     
-    // Simulate AI analysis for demo purposes
-    setTimeout(() => {
-      const sampleListings = [
-        {
-          title: "Gently Used Fisher-Price Rock 'n Play Sleeper - Perfect for Naptime!",
-          description: "This has been such a lifesaver for us! Our little one loved sleeping in this cozy Rock 'n Play. It's been gently used and well-maintained. The vibration feature still works perfectly, and the toy bar kept our baby entertained. Smoke-free home. Pick up in [Your Area] or happy to meet at a safe public location!",
-          price: "$35",
-          category: "Baby & Kids"
-        },
-        {
-          title: "Beautiful Ceramic Kitchen Canister Set - Great for Organizing!",
-          description: "These lovely canisters have served us well in our kitchen! Perfect for storing flour, sugar, coffee, tea - you name it. They're in excellent condition with just minor wear from normal use. The airtight seals still work great. Would love for them to find a new home where they'll be appreciated!",
-          price: "$25",
-          category: "Home & Garden"
-        }
-      ];
+    try {
+      console.log('Calling AI analysis...');
       
-      const randomListing = sampleListings[Math.floor(Math.random() * sampleListings.length)];
-      setListingData(randomListing);
-      setIsAnalyzing(false);
+      const { data, error } = await supabase.functions.invoke('analyze-image', {
+        body: { imageData: selectedImage }
+      });
+
+      if (error) {
+        console.error('Supabase function error:', error);
+        throw new Error(error.message || 'Failed to analyze image');
+      }
+
+      console.log('AI analysis result:', data);
+
+      setListingData({
+        title: data.title,
+        description: data.description,
+        price: data.price,
+        category: data.category
+      });
+
       toast({
         title: "✨ Listing ready!",
         description: "Your item has been analyzed and a listing has been generated.",
       });
-    }, 2000);
+
+    } catch (error) {
+      console.error('Error analyzing image:', error);
+      toast({
+        title: "Analysis failed",
+        description: "Sorry, there was an issue analyzing your image. Please try again.",
+        variant: "destructive"
+      });
+      
+      // Fallback to demo data if AI fails
+      const fallbackData = {
+        title: "Beautiful Item - Great Condition!",
+        description: "This lovely item has been well-maintained and is ready for a new home! Comes from a smoke-free home. Happy to answer any questions!",
+        price: "$25",
+        category: "Home & Garden"
+      };
+      setListingData(fallbackData);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const copyToClipboard = async () => {
@@ -154,12 +174,12 @@ Price: ${listingData.price}`;
                   {isAnalyzing ? (
                     <>
                       <Sparkles className="w-5 h-5 mr-2 animate-spin" />
-                      Creating your perfect listing...
+                      AI is analyzing your item...
                     </>
                   ) : (
                     <>
                       <Sparkles className="w-5 h-5 mr-2" />
-                      Make it sell! ✨
+                      Analyze with AI ✨
                     </>
                   )}
                 </Button>
