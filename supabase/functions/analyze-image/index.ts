@@ -1,3 +1,4 @@
+
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
@@ -195,8 +196,14 @@ function createEnhancedPrompt(analysis: VisionAnalysis): string {
   const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
   
   const brands = extractBrands(detectedText);
-  const colors = extractColors(analysis.labels);
+  const colors = extractColorsImproved(analysis.labels);
   const materials = extractMaterials(analysis.labels);
+  
+  console.log('Color extraction debug:', {
+    rawLabels: analysis.labels.slice(0, 10).map(l => l.description),
+    extractedColors: colors,
+    materials: materials
+  });
   
   return `Create a marketplace listing for an item based on this AI vision analysis:
 
@@ -208,7 +215,7 @@ DETECTED TEXT: "${detectedText}"
 
 DETECTED BRANDS: ${brands.length > 0 ? brands.join(', ') : 'None detected'}
 
-COLORS: ${colors.join(', ')}
+COLORS: ${colors.length > 0 ? colors.join(', ') : 'Please infer likely colors from the item type'}
 
 MATERIALS: ${materials.join(', ')}
 
@@ -217,6 +224,7 @@ ADDITIONAL CONTEXT:
 - Focus on condition, functionality, and appeal to buyers
 - Include pickup/delivery information
 - Be honest about condition while highlighting positives
+- If no clear colors were detected, please infer likely colors based on the item type and common variants
 - Suggest appropriate category from: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles
 
 Create a compelling listing that would attract buyers while being truthful.`;
@@ -235,14 +243,50 @@ function extractBrands(text: string): string[] {
   );
 }
 
-function extractColors(labels: any[]): string[] {
-  const colors = ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 
-                 'black', 'white', 'gray', 'brown', 'silver', 'gold'];
+function extractColorsImproved(labels: any[]): string[] {
+  // Define pure color words that we want to match
+  const pureColors = [
+    'red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 
+    'black', 'white', 'gray', 'grey', 'brown', 'beige', 'tan', 'navy',
+    'turquoise', 'cyan', 'magenta', 'maroon', 'olive', 'lime', 'teal'
+  ];
   
-  return labels
-    .map(l => l.description.toLowerCase())
-    .filter(desc => colors.some(color => desc.includes(color)))
-    .slice(0, 3);
+  // Materials/finishes that are often confused with colors
+  const materialsToExclude = [
+    'silver', 'gold', 'bronze', 'copper', 'metallic', 'chrome', 'steel',
+    'aluminum', 'brass', 'platinum', 'iron'
+  ];
+  
+  const detectedColors = [];
+  
+  for (const label of labels) {
+    const description = label.description.toLowerCase();
+    const confidence = label.score;
+    
+    // Only consider labels with decent confidence
+    if (confidence < 0.6) continue;
+    
+    // Check for pure color matches
+    for (const color of pureColors) {
+      // Look for color as a standalone word or at the beginning of a compound word
+      const colorRegex = new RegExp(`\\b${color}\\b|^${color}(?=[A-Z]|\\s)`, 'i');
+      
+      if (colorRegex.test(description)) {
+        // Additional check: make sure it's not part of a material description
+        const isPartOfMaterial = materialsToExclude.some(material => 
+          description.includes(`${color} ${material}`) || 
+          description.includes(`${material} ${color}`)
+        );
+        
+        if (!isPartOfMaterial && !detectedColors.includes(color)) {
+          detectedColors.push(color);
+          console.log(`Found color "${color}" in label "${description}" with confidence ${confidence}`);
+        }
+      }
+    }
+  }
+  
+  return detectedColors.slice(0, 3);
 }
 
 function extractMaterials(labels: any[]): string[] {
