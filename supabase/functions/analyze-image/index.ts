@@ -36,18 +36,18 @@ serve(async (req) => {
       });
     }
 
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
+    const googleCloudApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
     
     console.log('🔑 Checking API keys...');
-    console.log('📱 GEMINI_API_KEY present:', !!geminiApiKey);
-    console.log('📱 GEMINI_API_KEY length:', geminiApiKey?.length || 0);
+    console.log('🔧 GOOGLE_CLOUD_API_KEY present:', !!googleCloudApiKey);
+    console.log('🔧 GOOGLE_CLOUD_API_KEY length:', googleCloudApiKey?.length || 0);
     console.log('🤖 OPENAI_API_KEY present:', !!openaiApiKey);
     console.log('🤖 OPENAI_API_KEY length:', openaiApiKey?.length || 0);
     
-    if (!geminiApiKey) {
-      console.error('❌ GEMINI_API_KEY not found in environment variables');
-      return new Response(JSON.stringify({ error: 'Gemini API key not configured' }), {
+    if (!googleCloudApiKey) {
+      console.error('❌ GOOGLE_CLOUD_API_KEY not found in environment variables');
+      return new Response(JSON.stringify({ error: 'Google Cloud API key not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -57,7 +57,7 @@ serve(async (req) => {
     
     let visionAnalysis;
     try {
-      visionAnalysis = await getEnhancedVisionAnalysis(imageData, geminiApiKey);
+      visionAnalysis = await getEnhancedVisionAnalysis(imageData, googleCloudApiKey);
       console.log('📊 Vision analysis complete:', {
         labelsCount: visionAnalysis.labels.length,
         objectsCount: visionAnalysis.objects.length,
@@ -121,7 +121,7 @@ serve(async (req) => {
   }
 });
 
-async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Promise<VisionAnalysis> {
+async function getEnhancedVisionAnalysis(imageData, apiKey) {
   console.log('📡 Starting Google Vision API call...');
   
   const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
@@ -188,7 +188,7 @@ async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Pro
   return analysis;
 }
 
-async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) {
+async function generateListingWithLLM(analysis, apiKey) {
   console.log('🤖 Starting LLM generation...');
   const prompt = createEnhancedPrompt(analysis);
   console.log('📝 Prompt created, length:', prompt.length);
@@ -265,7 +265,7 @@ async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) 
   }
 }
 
-function cleanJsonResponse(content: string): string {
+function cleanJsonResponse(content) {
   // Remove markdown code block syntax
   return content
     .replace(/```json\s*/g, '')
@@ -273,7 +273,7 @@ function cleanJsonResponse(content: string): string {
     .trim();
 }
 
-function createEnhancedPrompt(analysis: VisionAnalysis): string {
+function createEnhancedPrompt(analysis) {
   const labels = analysis.labels.slice(0, 10).map(l => 
     `${l.description} (confidence: ${(l.score * 100).toFixed(1)}%)`
   );
@@ -317,7 +317,7 @@ ADDITIONAL CONTEXT:
 Create a compelling listing that would attract buyers while being truthful.`;
 }
 
-function extractBrands(text: string): string[] {
+function extractBrands(text) {
   const brands = [
     'Apple', 'Samsung', 'Nike', 'Adidas', 'IKEA', 'Fisher-Price', 'Sony', 'LG',
     'Microsoft', 'Dell', 'HP', 'Canon', 'Nikon', 'Toyota', 'Honda', 'Ford',
@@ -330,7 +330,7 @@ function extractBrands(text: string): string[] {
   );
 }
 
-function extractColorsImproved(labels: any[]): string[] {
+function extractColorsImproved(labels) {
   // Define pure color words that we want to match
   const pureColors = [
     'red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 
@@ -376,7 +376,7 @@ function extractColorsImproved(labels: any[]): string[] {
   return detectedColors.slice(0, 3);
 }
 
-function extractMaterials(labels: any[]): string[] {
+function extractMaterials(labels) {
   const materials = ['wood', 'metal', 'plastic', 'glass', 'fabric', 'leather', 
                     'ceramic', 'paper', 'cardboard', 'stone', 'rubber'];
   
@@ -387,7 +387,7 @@ function extractMaterials(labels: any[]): string[] {
 }
 
 // Fallback deterministic generation
-function generateListingDeterministic(analysis: VisionAnalysis) {
+function generateListingDeterministic(analysis) {
   console.log('⚙️ Using deterministic generation');
   const detectedItems = analysis.labels.slice(0, 5).map(l => l.description);
   const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
@@ -409,7 +409,7 @@ function generateListingDeterministic(analysis: VisionAnalysis) {
   return listing;
 }
 
-function generateEnhancedDescription(analysis: VisionAnalysis): string {
+function generateEnhancedDescription(analysis) {
   const mainItem = analysis.labels[0]?.description || 'item';
   const features = analysis.labels.slice(1, 4).map(l => l.description).join(', ');
   const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
@@ -441,7 +441,7 @@ function generateEnhancedDescription(analysis: VisionAnalysis): string {
   return description;
 }
 
-function generateTitle(items: string[], text: string): string {
+function generateTitle(items, text) {
   const mainItem = items[0] || 'Item';
   const brand = extractBrands(text)[0];
   const condition = 'Great Condition';
@@ -452,7 +452,7 @@ function generateTitle(items: string[], text: string): string {
   return `${mainItem} - ${condition} - Must See!`;
 }
 
-function determineCategory(items: string[]): string {
+function determineCategory(items) {
   const categories = {
     'Baby & Kids': ['toy', 'baby', 'child', 'kid', 'infant', 'toddler', 'stroller', 'crib', 'doll', 'game'],
     'Electronics': ['phone', 'computer', 'laptop', 'tablet', 'electronic', 'device', 'camera', 'headphone', 'speaker'],
@@ -476,7 +476,7 @@ function determineCategory(items: string[]): string {
   return 'Home & Garden';
 }
 
-function estimatePrice(category: string, items: string[]): string {
+function estimatePrice(category, items) {
   const priceRanges = {
     'Baby & Kids': ['$10', '$20', '$35', '$50'],
     'Electronics': ['$25', '$75', '$150', '$300'],
