@@ -16,14 +16,20 @@ interface VisionAnalysis {
 }
 
 serve(async (req) => {
+  console.log('🚀 Function started - analyze-image');
+  
   if (req.method === 'OPTIONS') {
+    console.log('⚡ CORS preflight request handled');
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    console.log('📥 Parsing request body...');
     const { imageData } = await req.json();
+    console.log('📊 Request parsed successfully, imageData length:', imageData?.length || 'undefined');
     
     if (!imageData) {
+      console.error('❌ No image data provided in request');
       return new Response(JSON.stringify({ error: 'No image data provided' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -35,7 +41,9 @@ serve(async (req) => {
     
     console.log('🔑 Checking API keys...');
     console.log('📱 GEMINI_API_KEY present:', !!geminiApiKey);
+    console.log('📱 GEMINI_API_KEY length:', geminiApiKey?.length || 0);
     console.log('🤖 OPENAI_API_KEY present:', !!openaiApiKey);
+    console.log('🤖 OPENAI_API_KEY length:', openaiApiKey?.length || 0);
     
     if (!geminiApiKey) {
       console.error('❌ GEMINI_API_KEY not found in environment variables');
@@ -47,14 +55,18 @@ serve(async (req) => {
 
     console.log('🔍 Starting vision analysis...');
     
-    // Get comprehensive vision analysis
-    const visionAnalysis = await getEnhancedVisionAnalysis(imageData, geminiApiKey);
-    
-    console.log('📊 Vision analysis complete:', {
-      labelsCount: visionAnalysis.labels.length,
-      objectsCount: visionAnalysis.objects.length,
-      textsCount: visionAnalysis.texts.length
-    });
+    let visionAnalysis;
+    try {
+      visionAnalysis = await getEnhancedVisionAnalysis(imageData, geminiApiKey);
+      console.log('📊 Vision analysis complete:', {
+        labelsCount: visionAnalysis.labels.length,
+        objectsCount: visionAnalysis.objects.length,
+        textsCount: visionAnalysis.texts.length
+      });
+    } catch (visionError) {
+      console.error('💥 Vision analysis failed:', visionError);
+      throw visionError;
+    }
     
     let listing;
     
@@ -77,20 +89,32 @@ serve(async (req) => {
     console.log('📝 Final listing generated:', {
       title: listing.title,
       category: listing.category,
-      price: listing.price
+      price: listing.price,
+      descriptionLength: listing.description?.length || 0
     });
 
-    return new Response(JSON.stringify({
+    const finalResponse = {
       ...listing,
       confidence: visionAnalysis.labels[0]?.score || 0.8,
       analysisMethod: openaiApiKey ? 'llm' : 'deterministic'
-    }), {
+    };
+
+    console.log('✅ Sending successful response');
+    return new Response(JSON.stringify(finalResponse), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('💥 Error in analyze-image function:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error('💥 Error name:', error.name);
+    console.error('💥 Error message:', error.message);
+    console.error('💥 Error stack:', error.stack);
+    
+    return new Response(JSON.stringify({ 
+      error: error.message,
+      errorType: error.name,
+      timestamp: new Date().toISOString()
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -98,39 +122,53 @@ serve(async (req) => {
 });
 
 async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Promise<VisionAnalysis> {
-  const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
-
-  console.log('📡 Calling Google Vision API...');
+  console.log('📡 Starting Google Vision API call...');
   
+  const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
+  console.log('🖼️ Image data prepared, base64 length:', base64Image.length);
+
+  const requestBody = {
+    requests: [{
+      image: { content: base64Image },
+      features: [
+        { type: 'LABEL_DETECTION', maxResults: 15 },
+        { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
+        { type: 'TEXT_DETECTION', maxResults: 10 },
+        { type: 'FACE_DETECTION', maxResults: 5 },
+        { type: 'LANDMARK_DETECTION', maxResults: 5 },
+        { type: 'SAFE_SEARCH_DETECTION' }
+      ]
+    }]
+  };
+  
+  console.log('📤 Making Vision API request...');
   const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      requests: [{
-        image: { content: base64Image },
-        features: [
-          { type: 'LABEL_DETECTION', maxResults: 15 },
-          { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
-          { type: 'TEXT_DETECTION', maxResults: 10 },
-          { type: 'FACE_DETECTION', maxResults: 5 },
-          { type: 'LANDMARK_DETECTION', maxResults: 5 },
-          { type: 'SAFE_SEARCH_DETECTION' }
-        ]
-      }]
-    })
+    body: JSON.stringify(requestBody)
   });
 
+  console.log('📥 Vision API response status:', response.status);
+  console.log('📥 Vision API response ok:', response.ok);
+
   const data = await response.json();
+  console.log('📄 Vision API response data keys:', Object.keys(data));
   
   if (!response.ok) {
-    console.error('❌ Vision API error:', data);
-    throw new Error(`Vision API error: ${JSON.stringify(data)}`);
+    console.error('❌ Vision API error response:', data);
+    console.error('❌ Vision API error status:', response.status);
+    console.error('❌ Vision API error statusText:', response.statusText);
+    throw new Error(`Vision API error (${response.status}): ${JSON.stringify(data)}`);
   }
 
   console.log('✅ Vision API response successful');
+  console.log('📊 Response structure:', {
+    responses: data.responses?.length || 0,
+    firstResponse: data.responses?.[0] ? Object.keys(data.responses[0]) : 'none'
+  });
 
   const result = data.responses[0];
-  return {
+  const analysis = {
     labels: result.labelAnnotations || [],
     objects: result.localizedObjectAnnotations || [],
     texts: result.textAnnotations || [],
@@ -138,10 +176,22 @@ async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Pro
     landmarks: result.landmarkAnnotations || [],
     safeSearch: result.safeSearchAnnotation
   };
+
+  console.log('📊 Final analysis counts:', {
+    labels: analysis.labels.length,
+    objects: analysis.objects.length,
+    texts: analysis.texts.length,
+    faces: analysis.faces.length,
+    landmarks: analysis.landmarks.length
+  });
+
+  return analysis;
 }
 
 async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) {
+  console.log('🤖 Starting LLM generation...');
   const prompt = createEnhancedPrompt(analysis);
+  console.log('📝 Prompt created, length:', prompt.length);
   
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -171,23 +221,33 @@ async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) 
     })
   });
 
+  console.log('🤖 OpenAI response status:', response.status);
   const data = await response.json();
+  console.log('🤖 OpenAI response received');
   
   if (!response.ok) {
+    console.error('❌ OpenAI API error:', data);
     throw new Error(`OpenAI API error: ${JSON.stringify(data)}`);
   }
 
   try {
     const content = data.choices[0].message.content;
-    console.log('Raw OpenAI response:', content);
+    console.log('📄 Raw OpenAI response:', content);
     
     const cleanedContent = cleanJsonResponse(content);
-    console.log('Cleaned OpenAI response:', cleanedContent);
+    console.log('🧹 Cleaned OpenAI response:', cleanedContent);
     
     const parsed = JSON.parse(cleanedContent);
+    console.log('✅ Successfully parsed OpenAI response');
     
     // Validate required fields
     if (!parsed.title || !parsed.description || !parsed.category || !parsed.estimatedPrice) {
+      console.error('❌ Missing required fields in OpenAI response:', {
+        title: !!parsed.title,
+        description: !!parsed.description,
+        category: !!parsed.category,
+        estimatedPrice: !!parsed.estimatedPrice
+      });
       throw new Error('Missing required fields in OpenAI response');
     }
     
@@ -199,8 +259,8 @@ async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) 
       detectedItems: analysis.labels.slice(0, 5).map(l => l.description)
     };
   } catch (parseError) {
-    console.error('Parse error details:', parseError);
-    console.error('Content that failed to parse:', data.choices[0].message.content);
+    console.error('💥 Parse error details:', parseError);
+    console.error('📄 Content that failed to parse:', data.choices[0].message.content);
     throw new Error(`Failed to parse LLM response: ${parseError.message}`);
   }
 }
@@ -328,16 +388,25 @@ function extractMaterials(labels: any[]): string[] {
 
 // Fallback deterministic generation
 function generateListingDeterministic(analysis: VisionAnalysis) {
+  console.log('⚙️ Using deterministic generation');
   const detectedItems = analysis.labels.slice(0, 5).map(l => l.description);
   const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
   
-  return {
+  const listing = {
     title: generateTitle(detectedItems, detectedText),
     description: generateEnhancedDescription(analysis),
     category: determineCategory(detectedItems),
     price: estimatePrice(determineCategory(detectedItems), detectedItems),
     detectedItems
   };
+
+  console.log('⚙️ Deterministic listing created:', {
+    title: listing.title,
+    category: listing.category,
+    price: listing.price
+  });
+
+  return listing;
 }
 
 function generateEnhancedDescription(analysis: VisionAnalysis): string {
