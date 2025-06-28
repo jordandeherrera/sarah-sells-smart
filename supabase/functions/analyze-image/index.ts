@@ -1,4 +1,3 @@
-
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
@@ -31,32 +30,55 @@ serve(async (req) => {
       });
     }
 
-    const googleApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
+    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
     
-    if (!googleApiKey) {
-      return new Response(JSON.stringify({ error: 'Google Cloud API key not configured' }), {
+    console.log('🔑 Checking API keys...');
+    console.log('📱 GEMINI_API_KEY present:', !!geminiApiKey);
+    console.log('🤖 OPENAI_API_KEY present:', !!openaiApiKey);
+    
+    if (!geminiApiKey) {
+      console.error('❌ GEMINI_API_KEY not found in environment variables');
+      return new Response(JSON.stringify({ error: 'Gemini API key not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    console.log('🔍 Starting vision analysis...');
+    
     // Get comprehensive vision analysis
-    const visionAnalysis = await getEnhancedVisionAnalysis(imageData, googleApiKey);
+    const visionAnalysis = await getEnhancedVisionAnalysis(imageData, geminiApiKey);
+    
+    console.log('📊 Vision analysis complete:', {
+      labelsCount: visionAnalysis.labels.length,
+      objectsCount: visionAnalysis.objects.length,
+      textsCount: visionAnalysis.texts.length
+    });
     
     let listing;
     
     // Try LLM generation first, fallback to deterministic
     if (openaiApiKey) {
       try {
+        console.log('🤖 Attempting LLM generation...');
         listing = await generateListingWithLLM(visionAnalysis, openaiApiKey);
+        console.log('✅ LLM generation successful');
       } catch (error) {
-        console.error('LLM generation failed, falling back to deterministic:', error);
+        console.error('❌ LLM generation failed, falling back to deterministic:', error);
         listing = generateListingDeterministic(visionAnalysis);
+        console.log('🔄 Using deterministic generation');
       }
     } else {
+      console.log('🔄 No OpenAI key, using deterministic generation');
       listing = generateListingDeterministic(visionAnalysis);
     }
+
+    console.log('📝 Final listing generated:', {
+      title: listing.title,
+      category: listing.category,
+      price: listing.price
+    });
 
     return new Response(JSON.stringify({
       ...listing,
@@ -67,7 +89,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('Error in analyze-image function:', error);
+    console.error('💥 Error in analyze-image function:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -78,6 +100,8 @@ serve(async (req) => {
 async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Promise<VisionAnalysis> {
   const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
 
+  console.log('📡 Calling Google Vision API...');
+  
   const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -99,8 +123,11 @@ async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Pro
   const data = await response.json();
   
   if (!response.ok) {
+    console.error('❌ Vision API error:', data);
     throw new Error(`Vision API error: ${JSON.stringify(data)}`);
   }
+
+  console.log('✅ Vision API response successful');
 
   const result = data.responses[0];
   return {
