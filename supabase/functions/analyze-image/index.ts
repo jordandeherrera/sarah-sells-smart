@@ -309,7 +309,7 @@ MATERIALS: ${materials.join(', ')}
 ADDITIONAL CONTEXT:
 - This is for a person-to-person marketplace (like Facebook Marketplace)
 - Focus on condition, functionality, and appeal to buyers
-- Include pickup/delivery information
+- ALWAYS include: "Located in South Reno. Available for pickup or delivery for $20 delivery fee."
 - Be honest about condition while highlighting positives
 - If no clear colors were detected, please infer likely colors based on the item type and common variants
 - Suggest appropriate category from: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles
@@ -436,7 +436,7 @@ function generateEnhancedDescription(analysis) {
     description += `Good condition with normal signs of use. `;
   }
   
-  description += `From a clean, smoke-free home. Happy to answer questions or provide additional photos. Available for pickup or can meet at a safe public location.`;
+  description += `From a clean, smoke-free home. Located in South Reno. Available for pickup or delivery for $20 delivery fee. Happy to answer questions or provide additional photos.`;
   
   return description;
 }
