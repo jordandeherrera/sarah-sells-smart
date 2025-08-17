@@ -5,10 +5,21 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  define: {
+    // Define missing WebSocket token to prevent runtime errors
+    __WS_TOKEN__: JSON.stringify(''),
+    // Define other potentially missing Vite environment variables
+    __VITE_IS_MODERN__: true,
+    __VITE_LEGACY__: false,
+  },
   server: {
     host: "::",
     port: 8080,
-    hmr: true,
+    hmr: {
+      port: 8081, // Use different port for HMR
+      clientPort: 8081,
+      overlay: false,
+    },
   },
   plugins: [
     react(),
