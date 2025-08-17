@@ -8,13 +8,12 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    hmr: {
-      overlay: false,
-    },
+    hmr: true,
   },
   plugins: [
     react(),
-    mode === 'development' && componentTagger(),
+    // Temporarily disabled lovable-tagger to resolve __WS_TOKEN__ error
+    // mode === 'development' && componentTagger(),
   ].filter(Boolean),
   resolve: {
     alias: {
