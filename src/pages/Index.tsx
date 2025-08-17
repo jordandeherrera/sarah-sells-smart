@@ -36,7 +36,9 @@ const Index = () => {
     setIsAnalyzing(true);
     
     try {
-      console.log('Calling AI analysis...');
+      console.log('🔍 Starting AI analysis...');
+      console.log('📡 Calling function on project: ybdfjsofgzzmwlyxdmba');
+      console.log('🖼️ Image data length:', selectedImage.length);
       
       const { data, error } = await supabase.functions.invoke('analyze-image', {
         body: { 
@@ -45,12 +47,41 @@ const Index = () => {
         }
       });
 
+      console.log('📊 Function response:', { data, error });
+
       if (error) {
-        console.error('Supabase function error:', error);
+        console.error('❌ Supabase function error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        
+        // Check if it's a 500 error and provide more specific guidance
+        if (error.message?.includes('500') || error.details?.includes('500')) {
+          throw new Error(`Server error (500): This usually means missing environment variables in your Supabase project. Please check that GOOGLE_CLOUD_API_KEY and OPENAI_API_KEY are set in your project secrets.`);
+        }
+        
         throw new Error(error.message || 'Failed to analyze image');
       }
 
-      console.log('AI analysis result:', data);
+      console.log('✅ AI analysis result:', data);
+
+      // Validate the response structure
+      if (!data || typeof data !== 'object') {
+        console.error('❌ Invalid response structure:', data);
+        throw new Error('Invalid response from AI analysis');
+      }
+
+      // Check if required fields are present
+      const requiredFields = ['title', 'description', 'price', 'category'];
+      const missingFields = requiredFields.filter(field => !data[field]);
+      
+      if (missingFields.length > 0) {
+        console.error('❌ Missing required fields in response:', missingFields);
+        console.error('📝 Full response data:', data);
+        throw new Error(`Missing required fields in response: ${missingFields.join(', ')}`);
+      }
 
       setListingData({
         title: data.title,
@@ -65,14 +96,29 @@ const Index = () => {
       });
 
     } catch (error) {
-      console.error('Error analyzing image:', error);
+      console.error('💥 Error analyzing image:', error);
+      
+      // Provide more specific error messages
+      let errorMessage = "Sorry, there was an issue analyzing your image.";
+      
+      if (error instanceof Error) {
+        if (error.message.includes('500') || error.message.includes('environment variables')) {
+          errorMessage = "Server configuration error. Please ensure your API keys are properly set up in your Supabase project.";
+        } else if (error.message.includes('Missing required fields')) {
+          errorMessage = "The AI analysis returned incomplete data. This might be due to API key issues.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       toast({
         title: "Analysis failed",
-        description: "Sorry, there was an issue analyzing your image. Please try again.",
+        description: errorMessage,
         variant: "destructive"
       });
       
       // Fallback to demo data if AI fails
+      console.log('🔄 Using fallback demo data');
       const fallbackData = {
         title: "Beautiful Item - Great Condition!",
         description: "This lovely item has been well-maintained and is ready for a new home! Comes from a smoke-free home. Happy to answer any questions!",
