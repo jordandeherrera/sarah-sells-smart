@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { Camera, Upload, Sparkles, Copy, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
 const Index = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [itemDescription, setItemDescription] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [listingData, setListingData] = useState<{
     title: string;
@@ -36,7 +39,10 @@ const Index = () => {
       console.log('Calling AI analysis...');
       
       const { data, error } = await supabase.functions.invoke('analyze-image', {
-        body: { imageData: selectedImage }
+        body: { 
+          imageData: selectedImage,
+          itemDescription: itemDescription.trim() || undefined
+        }
       });
 
       if (error) {
@@ -107,6 +113,7 @@ Price: ${listingData.price}`;
 
   const resetForm = () => {
     setSelectedImage(null);
+    setItemDescription('');
     setListingData(null);
     setCopied(false);
   };
@@ -156,6 +163,25 @@ Price: ${listingData.price}`;
           </Card>
         )}
 
+        {/* Optional Description Field - Always Visible */}
+        <Card className="mb-6">
+          <CardContent className="p-4">
+            <Label htmlFor="item-description" className="text-sm font-medium text-gray-700 mb-2 block">
+              Item Description (Optional)
+            </Label>
+            <Textarea
+              id="item-description"
+              placeholder="Tell us about your item... (e.g., 'This is a vintage coffee table from the 1970s', 'Barely used, only worn twice', 'Great condition, comes with original box')"
+              value={itemDescription}
+              onChange={(e) => setItemDescription(e.target.value)}
+              className="min-h-[80px] resize-none"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              This helps our AI create a better listing by providing additional context about your item.
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Selected Image */}
         {selectedImage && !listingData && (
           <Card className="mb-6">
@@ -165,6 +191,7 @@ Price: ${listingData.price}`;
                 alt="Selected item"
                 className="w-full h-64 object-cover rounded-lg mb-4"
               />
+              
               <div className="space-y-3">
                 <Button
                   onClick={analyzeImage}

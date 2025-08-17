@@ -22,7 +22,7 @@ serve(async (req) => {
   }
 
   try {
-    const { imageData } = await req.json();
+    const { imageData, itemDescription } = await req.json();
     
     if (!imageData) {
       return new Response(JSON.stringify({ error: 'No image data provided' }), {
@@ -49,7 +49,7 @@ serve(async (req) => {
     // Try LLM generation first, fallback to deterministic
     if (openaiApiKey) {
       try {
-        listing = await generateListingWithLLM(visionAnalysis, openaiApiKey);
+        listing = await generateListingWithLLM(visionAnalysis, openaiApiKey, itemDescription);
       } catch (error) {
         console.error('LLM generation failed, falling back to deterministic:', error);
         listing = generateListingDeterministic(visionAnalysis);
@@ -113,8 +113,8 @@ async function getEnhancedVisionAnalysis(imageData: string, apiKey: string): Pro
   };
 }
 
-async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string) {
-  const prompt = createEnhancedPrompt(analysis);
+async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string, itemDescription?: string) {
+  const prompt = createEnhancedPrompt(analysis, itemDescription);
   
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -186,7 +186,7 @@ function cleanJsonResponse(content: string): string {
     .trim();
 }
 
-function createEnhancedPrompt(analysis: VisionAnalysis): string {
+function createEnhancedPrompt(analysis: VisionAnalysis, itemDescription?: string): string {
   const labels = analysis.labels.slice(0, 10).map(l => 
     `${l.description} (confidence: ${(l.score * 100).toFixed(1)}%)`
   );
@@ -205,7 +205,14 @@ function createEnhancedPrompt(analysis: VisionAnalysis): string {
     materials: materials
   });
   
-  return `Create a marketplace listing for an item based on this AI vision analysis:
+  // Start with user description if provided
+  const userDescriptionSection = itemDescription 
+    ? `USER DESCRIPTION: "${itemDescription}"
+
+`
+    : '';
+  
+  return `${userDescriptionSection}Create a marketplace listing for an item based on this AI vision analysis:
 
 DETECTED LABELS: ${labels.join(', ')}
 
@@ -226,6 +233,7 @@ ADDITIONAL CONTEXT:
 - Be honest about condition while highlighting positives
 - If no clear colors were detected, please infer likely colors based on the item type and common variants
 - Suggest appropriate category from: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles
+${itemDescription ? '- Incorporate relevant details from the user description provided above' : ''}
 
 Create a compelling listing that would attract buyers while being truthful.`;
 }
