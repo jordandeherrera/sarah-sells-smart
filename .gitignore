@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.wrangler
+supabase/.temp
 
 # Editor directories and files
 .vscode/*

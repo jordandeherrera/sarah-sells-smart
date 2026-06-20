@@ -1,1 +1,9 @@
-project_id = "mtywigqqsdpljtozvwnl"
+project_id = "ybdfjsofgzzmwlyxdmba"
+
+[functions.analyze-image]
+verify_jwt = false
+
+# For local Supabase development, configure Clerk third-party authentication:
+# [auth.third_party.clerk]
+# enabled = true
+# domain = "your-instance.clerk.accounts.dev"

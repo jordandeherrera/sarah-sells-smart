@@ -1,13 +1,22 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useSession, UserButton } from '@clerk/react';
 import { Camera, Upload, Sparkles, Copy, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { createSupabaseClient } from '@/integrations/supabase/client';
+
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const Index = () => {
+  const { session } = useSession();
+  const supabase = useMemo(
+    () => createSupabaseClient(() => session?.getToken() ?? Promise.resolve(null)),
+    [session],
+  );
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [itemDescription, setItemDescription] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -22,6 +31,26 @@ const Index = () => {
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+        toast({
+          title: 'Unsupported image',
+          description: 'Please choose a JPEG, PNG, or WebP image.',
+          variant: 'destructive',
+        });
+        event.target.value = '';
+        return;
+      }
+
+      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+        toast({
+          title: 'Image is too large',
+          description: 'Please choose an image smaller than 5 MB.',
+          variant: 'destructive',
+        });
+        event.target.value = '';
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = (e) => {
         setSelectedImage(e.target?.result as string);
@@ -36,10 +65,6 @@ const Index = () => {
     setIsAnalyzing(true);
     
     try {
-      console.log('🔍 Starting AI analysis...');
-      console.log('📡 Calling function on project: ybdfjsofgzzmwlyxdmba');
-      console.log('🖼️ Image data length:', selectedImage.length);
-      
       const { data, error } = await supabase.functions.invoke('analyze-image', {
         body: { 
           imageData: selectedImage,
@@ -47,29 +72,24 @@ const Index = () => {
         }
       });
 
-      console.log('📊 Function response:', { data, error });
-
       if (error) {
-        console.error('❌ Supabase function error details:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
-        });
-        
-        // Check if it's a 500 error and provide more specific guidance
-        if (error.message?.includes('500') || error.details?.includes('500')) {
-          throw new Error(`Server error (500): This usually means missing environment variables in your Supabase project. Please check that GOOGLE_CLOUD_API_KEY and OPENAI_API_KEY are set in your project secrets.`);
+        let errorMessage = error.message || 'Failed to analyze image';
+        if ('context' in error && error.context instanceof Response) {
+          try {
+            const responseBody = await error.context.json() as {
+              error?: string;
+              details?: string;
+            };
+            errorMessage = responseBody.details ?? responseBody.error ?? errorMessage;
+          } catch {
+            // Preserve the Supabase client error if the response is not JSON.
+          }
         }
-        
-        throw new Error(error.message || 'Failed to analyze image');
+        throw new Error(errorMessage);
       }
-
-      console.log('✅ AI analysis result:', data);
 
       // Validate the response structure
       if (!data || typeof data !== 'object') {
-        console.error('❌ Invalid response structure:', data);
         throw new Error('Invalid response from AI analysis');
       }
 
@@ -78,8 +98,6 @@ const Index = () => {
       const missingFields = requiredFields.filter(field => !data[field]);
       
       if (missingFields.length > 0) {
-        console.error('❌ Missing required fields in response:', missingFields);
-        console.error('📝 Full response data:', data);
         throw new Error(`Missing required fields in response: ${missingFields.join(', ')}`);
       }
 
@@ -98,14 +116,11 @@ const Index = () => {
     } catch (error) {
       console.error('💥 Error analyzing image:', error);
       
-      // Provide more specific error messages
       let errorMessage = "Sorry, there was an issue analyzing your image.";
       
       if (error instanceof Error) {
-        if (error.message.includes('500') || error.message.includes('environment variables')) {
-          errorMessage = "Server configuration error. Please ensure your API keys are properly set up in your Supabase project.";
-        } else if (error.message.includes('Missing required fields')) {
-          errorMessage = "The AI analysis returned incomplete data. This might be due to API key issues.";
+        if (error.message.includes('Missing required fields')) {
+          errorMessage = "The AI analysis returned incomplete data.";
         } else {
           errorMessage = error.message;
         }
@@ -117,8 +132,7 @@ const Index = () => {
         variant: "destructive"
       });
       
-      // Fallback to demo data if AI fails
-      console.log('🔄 Using fallback demo data');
+      // Keep the app usable when an upstream AI provider is temporarily unavailable.
       const fallbackData = {
         title: "Beautiful Item - Great Condition!",
         description: "This lovely item has been well-maintained and is ready for a new home! Comes from a smoke-free home. Happy to answer any questions!",
@@ -168,6 +182,9 @@ Price: ${listingData.price}`;
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-orange-50">
       <div className="container mx-auto px-4 py-8 max-w-md">
         {/* Header */}
+        <div className="mb-8 flex justify-end">
+          <UserButton />
+        </div>
         <div className="text-center mb-8">
           <div className="bg-gradient-to-r from-blue-500 to-orange-400 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
             <Sparkles className="text-white w-8 h-8" />

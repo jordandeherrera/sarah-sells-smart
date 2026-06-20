@@ -1,227 +1,133 @@
-# Sarah Sells Smart 🚀
+# Sarah Sells Smart
 
-An AI-powered marketplace listing assistant that helps you create compelling listings for items you want to sell. Simply take a photo of your item, and our AI will generate a professional title, description, suggested price, and category for platforms like Facebook Marketplace, Craigslist, and more.
+Sarah Sells Smart turns a photo and optional seller notes into a marketplace listing with a title, description, suggested price, and category.
 
-## ✨ Features
+The React application is hosted as static assets on Cloudflare Workers. Clerk handles user authentication, and a Supabase Edge Function uses OpenAI vision with a Gemini multimodal fallback.
 
-- **AI-Powered Analysis**: Uses Google Cloud Vision API and OpenAI to analyze item photos
-- **Smart Listing Generation**: Creates compelling titles and descriptions automatically
-- **Price Estimation**: Suggests competitive prices based on item analysis
-- **Category Detection**: Automatically categorizes items for better marketplace visibility
-- **One-Click Copy**: Copy generated listings directly to your clipboard
-- **Mobile-First Design**: Optimized for taking photos on mobile devices
-- **Fallback System**: Works even when AI services are unavailable
+## Architecture
 
-## 🏗️ Project Structure
+- React, TypeScript, Vite, Tailwind CSS, and shadcn/ui
+- Clerk React SDK for sign-in and session management
+- Direct Clerk JWKS verification inside the Supabase Edge Function
+- Supabase Edge Function for Gemini and OpenAI vision requests
+- Cloudflare Workers Static Assets for production hosting
+- Cloudflare Workers Builds for deployments from `main`
 
-```
-sarah-sells-smart/
-├── src/
-│   ├── components/ui/          # shadcn/ui components
-│   ├── hooks/                  # Custom React hooks
-│   ├── integrations/
-│   │   └── supabase/          # Supabase client configuration
-│   ├── lib/                   # Utility functions
-│   ├── pages/                 # Application pages
-│   │   ├── Index.tsx          # Main listing generation page
-│   │   └── NotFound.tsx       # 404 page
-│   └── App.tsx                # Main application component
-├── supabase/
-│   ├── config.toml            # Supabase configuration
-│   └── functions/
-│       └── analyze-image/     # Edge function for AI analysis
-├── public/                    # Static assets
-└── package.json               # Dependencies and scripts
+## Local development
+
+Requirements:
+
+- Node.js 20.19 or newer (or Node.js 22.12 or newer)
+- npm
+- A Clerk application
+- Supabase CLI access when developing or deploying the Edge Function
+
+Install dependencies and create local configuration:
+
+```sh
+npm ci
+cp .env.example .env.local
 ```
 
-## 🛠️ Technology Stack
+Set these public browser variables in `.env.local`:
 
-- **Frontend**: React 18, TypeScript, Vite
-- **UI Components**: shadcn/ui, Radix UI, Tailwind CSS
-- **Backend**: Supabase Edge Functions
-- **AI Services**: Google Cloud Vision API, OpenAI GPT-4
-- **State Management**: React Query (TanStack Query)
-- **Routing**: React Router DOM
-- **Styling**: Tailwind CSS with custom animations
+```dotenv
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_replace_me
+VITE_SUPABASE_URL=https://ybdfjsofgzzmwlyxdmba.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=replace_with_your_supabase_publishable_key
+```
 
-## 🚀 Getting Started
+Start Vite:
 
-### Prerequisites
+```sh
+npm run dev
+```
 
-- Node.js 18+ and npm
-- Supabase account
-- Google Cloud Vision API key (optional but recommended)
-- OpenAI API key (optional but recommended)
+The development server listens on `http://localhost:8080`.
 
-### Installation
+## Clerk and Supabase authentication
 
-1. **Clone the repository**
-   ```bash
-   git clone <YOUR_GIT_URL>
-   cd sarah-sells-smart
-   ```
+The application verifies Clerk session tokens against the Clerk instance's
+public JWKS. It does not use a Clerk secret key, custom JWT verification key,
+Supabase service-role key, or shared JWT template.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+Configure the allowed sign-in and sign-up methods in Clerk. Supabase
+Third-Party Auth is only required if the frontend later accesses Supabase
+Database, Storage, or Realtime directly.
 
-3. **Set up environment variables**
-   Create a `.env.local` file in the root directory:
-   ```env
-   VITE_SUPABASE_URL=your_supabase_project_url
-   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-   ```
+The frontend passes `session.getToken()` to the Supabase client's `accessToken`
+callback. The `analyze-image` function validates that token against Clerk's
+public JWKS before processing the request.
 
-4. **Configure Supabase**
-   - Set up a new Supabase project
-   - Deploy the edge function:
-     ```bash
-     supabase functions deploy analyze-image
-     ```
-   - Set environment variables in Supabase dashboard:
-     - `GOOGLE_CLOUD_API_KEY` (optional)
-     - `OPENAI_API_KEY` (optional)
+For local Supabase services, uncomment the Clerk section in `supabase/config.toml` and provide the Clerk instance domain.
 
-5. **Start the development server**
-   ```bash
-   npm run dev
-   ```
+## Supabase Edge Function
 
-6. **Open your browser**
-   Navigate to `http://localhost:5173`
+The function expects these existing Supabase project secrets:
 
-## 🔧 Development
+- `OPENAI_API_KEY` — primary OpenAI vision credential
+- `GEMINI_API_KEY` — Gemini vision fallback
 
-### Available Scripts
+Check the configured secrets without printing their values:
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run build:dev` - Build for development
-- `npm run lint` - Run ESLint
-- `npm run preview` - Preview production build
+```sh
+npx supabase secrets list --project-ref ybdfjsofgzzmwlyxdmba
+```
 
-### Code Structure
+Function deployments are intentionally manual:
 
-#### Frontend Architecture
-- **Component-based**: Uses shadcn/ui components for consistent design
-- **Type-safe**: Full TypeScript implementation
-- **Responsive**: Mobile-first design with Tailwind CSS
-- **State Management**: React Query for server state, React hooks for local state
+```sh
+npx supabase functions deploy analyze-image --project-ref ybdfjsofgzzmwlyxdmba --no-verify-jwt
+```
 
-#### AI Analysis Flow
-1. User uploads/takes photo
-2. Image sent to Supabase Edge Function
-3. Google Cloud Vision API analyzes image
-4. OpenAI generates listing (if available)
-5. Fallback to deterministic generation if AI fails
-6. Results returned to frontend
+Supabase gateway JWT verification is disabled for this function. The function
+itself rejects requests unless the Clerk signature, issuer, expiry, and
+authorized-party origin are valid.
 
-#### Key Components
-- `Index.tsx`: Main application interface
-- `analyze-image/index.ts`: Supabase Edge Function for AI analysis
-- `client.ts`: Supabase client configuration
+## Quality checks
 
-## 🤝 Contributing
+```sh
+npm run typecheck
+npm run lint
+npm run build
+npm run deploy:dry-run
+```
 
-We welcome contributions! Here's how you can help:
+Preview the Cloudflare build locally:
 
-### Development Setup
+```sh
+npm run build
+npm run preview
+```
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests and linting: `npm run lint`
-5. Commit your changes: `git commit -m 'Add amazing feature'`
-6. Push to the branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
+## Cloudflare deployment
 
-### Contribution Guidelines
+The repository contains `wrangler.jsonc` for the `sarah-sells-smart` Worker. It serves `dist` with single-page-application fallback routing.
 
-- **Code Style**: Follow the existing TypeScript and React patterns
-- **Testing**: Add tests for new features
-- **Documentation**: Update README and add comments for complex logic
-- **Commits**: Use conventional commit messages
-- **PRs**: Provide clear descriptions of changes
+In the Cloudflare dashboard:
 
-### Areas for Contribution
+1. Open **Workers & Pages → Create application → Import a repository**.
+2. Select this GitHub repository.
+3. Set the production branch to `main` and disable non-production branch builds.
+4. Set the build command to `npm ci && npm run build`.
+5. Set the deploy command to `npx wrangler deploy`.
+6. Add these build variables:
+   - `VITE_CLERK_PUBLISHABLE_KEY`
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+7. Save and deploy.
 
-- **UI/UX Improvements**: Better mobile experience, accessibility
-- **AI Enhancements**: More sophisticated listing generation
-- **Platform Integration**: Support for more marketplaces
-- **Performance**: Optimize image processing and API calls
-- **Testing**: Add comprehensive test coverage
-- **Documentation**: Improve guides and examples
+Every push to `main` will build and deploy the frontend. Supabase function changes still require the manual command above.
 
-## 🔒 Environment Variables
+The Worker name in Cloudflare must remain `sarah-sells-smart` to match `wrangler.jsonc`.
 
-### Required
-- `VITE_SUPABASE_URL`: Your Supabase project URL
-- `VITE_SUPABASE_ANON_KEY`: Your Supabase anonymous key
+## Request limits
 
-### Optional (for enhanced AI features)
-- `GOOGLE_CLOUD_API_KEY`: Google Cloud Vision API key
-- `OPENAI_API_KEY`: OpenAI API key for GPT-4 integration
+- Signed-in Clerk session required
+- JPEG, PNG, and WebP images only
+- Maximum source image size: 5 MB
+- Maximum optional description length: 1,000 characters
 
-## 🚀 Deployment
+## License
 
-### Using Lovable
-1. Open [Lovable](https://lovable.dev/projects/fffb7e1a-df81-49a3-8a14-6c180ad4bcd0)
-2. Click Share → Publish
-
-### Manual Deployment
-1. Build the project: `npm run build`
-2. Deploy to your preferred hosting platform (Vercel, Netlify, etc.)
-3. Set environment variables in your hosting platform
-
-### Custom Domain
-- Navigate to Project > Settings > Domains in Lovable
-- Click Connect Domain
-- Follow the DNS configuration instructions
-
-## 📱 Usage
-
-1. **Take a Photo**: Use your camera or upload an image of the item you want to sell
-2. **AI Analysis**: Click "Analyze with AI" to process your image
-3. **Review Results**: Check the generated title, description, price, and category
-4. **Copy Listing**: Click "Copy listing to clipboard" to get the formatted text
-5. **Paste & Sell**: Paste the listing into your preferred marketplace
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**AI Analysis Fails**
-- Check that your API keys are properly configured
-- Verify your Supabase Edge Function is deployed
-- Check browser console for error messages
-
-**Image Upload Issues**
-- Ensure you're using a supported image format (JPEG, PNG, WebP)
-- Check that the image file size isn't too large
-- Try refreshing the page and uploading again
-
-**Copy to Clipboard Fails**
-- Ensure you're using HTTPS (required for clipboard API)
-- Try manually selecting and copying the text
-- Check browser permissions for clipboard access
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [shadcn/ui](https://ui.shadcn.com/) components
-- Powered by [Supabase](https://supabase.com/) and [OpenAI](https://openai.com/)
-- Icons from [Lucide React](https://lucide.dev/)
-
-## 📞 Support
-
-- **Issues**: Create an issue on GitHub
-- **Discussions**: Use GitHub Discussions for questions
-- **Documentation**: Check the [Lovable docs](https://docs.lovable.dev/)
-
----
-
-Made with ❤️ to help make selling easier
+MIT

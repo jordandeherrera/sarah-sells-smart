@@ -10,13 +10,12 @@ const DevDebugPanel = () => {
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'development') return;
+    if (!import.meta.env.DEV) return;
 
     // Monitor HMR WebSocket status
     const checkWebSocket = () => {
       try {
-        // @ts-ignore - Access Vite's HMR client if available
-        if (import.meta && import.meta.hot) {
+        if (import.meta.hot) {
           setWsStatus('connected');
           console.log('✅ HMR WebSocket connected');
         } else {
@@ -47,7 +46,7 @@ const DevDebugPanel = () => {
     };
   }, []);
 
-  if (process.env.NODE_ENV !== 'development') return null;
+  if (!import.meta.env.DEV) return null;
 
   return (
     <>
@@ -97,7 +96,7 @@ const DevDebugPanel = () => {
             <div className="text-xs space-y-1">
               <div className="flex justify-between">
                 <span>Node Env:</span>
-                <Badge variant="outline">{process.env.NODE_ENV}</Badge>
+                <Badge variant="outline">development</Badge>
               </div>
               <div className="flex justify-between">
                 <span>Vite Mode:</span>

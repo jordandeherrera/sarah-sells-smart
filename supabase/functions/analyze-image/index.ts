@@ -1,215 +1,387 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createRemoteJWKSet, jwtVerify } from 'npm:jose@6.1.0';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const CLERK_ISSUER = 'https://improved-oyster-84.clerk.accounts.dev';
+const clerkJwks = createRemoteJWKSet(new URL(`${CLERK_ISSUER}/.well-known/jwks.json`));
+
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': origin ?? 'null',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Vary': 'Origin',
+});
 
-interface VisionAnalysis {
-  labels: any[];
-  objects: any[];
-  texts: any[];
-  faces?: any[];
-  landmarks?: any[];
-  safeSearch?: any;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_DESCRIPTION_LENGTH = 1_000;
+const MAX_LOG_TEXT_LENGTH = 1_000;
+const IMAGE_DATA_URL = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+
+interface VisionLabel {
+  description: string;
+  score: number;
 }
 
-serve(async (req) => {
-  console.log('🚀 Function started - analyze-image');
-  
-  if (req.method === 'OPTIONS') {
-    console.log('⚡ CORS preflight request handled');
-    return new Response(null, { headers: corsHeaders });
+interface VisionObject {
+  name: string;
+  score?: number;
+}
+
+interface VisionText {
+  description: string;
+}
+
+interface VisionAnalysis {
+  labels: VisionLabel[];
+  objects: VisionObject[];
+  texts: VisionText[];
+}
+
+interface AnalyzeRequest {
+  imageData: string;
+  itemDescription?: string;
+}
+
+interface Listing {
+  title: string;
+  description: string;
+  price: string;
+  category: string;
+  detectedItems: string[];
+}
+
+const listingResponseFormat = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'marketplace_listing',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string' },
+        category: { type: 'string' },
+        price: { type: 'string' },
+        detectedItems: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['title', 'description', 'category', 'price', 'detectedItems'],
+      additionalProperties: false,
+    },
+  },
+};
+
+const geminiListingSchema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    description: { type: 'string' },
+    category: { type: 'string' },
+    price: {
+      type: 'string',
+      description: 'A concrete suggested asking price in US dollars, formatted like $25. Never use Contact for price, negotiable, unknown, or a price range.',
+    },
+    detectedItems: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['title', 'description', 'category', 'price', 'detectedItems'],
+};
+
+const jsonResponse = (body: unknown, origin: string | null, status = 200) =>
+  Response.json(body, {
+    status,
+    headers: corsHeaders(origin),
+  });
+
+const authenticateRequest = async (request: Request): Promise<string> => {
+  const authorization = request.headers.get('authorization');
+  const origin = request.headers.get('origin');
+
+  if (!authorization?.startsWith('Bearer ') || !origin) {
+    throw new Error('Missing authentication credentials');
+  }
+
+  const token = authorization.slice('Bearer '.length);
+  const { payload } = await jwtVerify(token, clerkJwks, {
+    issuer: CLERK_ISSUER,
+    algorithms: ['RS256'],
+  });
+
+  if (!payload.sub || payload.azp !== origin) {
+    throw new Error('Token is not authorized for this origin');
+  }
+
+  return payload.sub;
+};
+
+const parseRequest = async (request: Request): Promise<AnalyzeRequest> => {
+  let body: unknown;
+
+  try {
+    body = await request.json();
+  } catch {
+    throw new Error('Request body must be valid JSON');
+  }
+
+  if (!body || typeof body !== 'object') {
+    throw new Error('Request body must be an object');
+  }
+
+  const { imageData, itemDescription } = body as Record<string, unknown>;
+  if (typeof imageData !== 'string') {
+    throw new Error('imageData is required');
+  }
+
+  const imageMatch = imageData.match(IMAGE_DATA_URL);
+  if (!imageMatch) {
+    throw new Error('imageData must be a JPEG, PNG, or WebP data URL');
+  }
+
+  const padding = imageMatch[2].endsWith('==') ? 2 : imageMatch[2].endsWith('=') ? 1 : 0;
+  const imageBytes = Math.floor((imageMatch[2].length * 3) / 4) - padding;
+  if (imageBytes > MAX_IMAGE_BYTES) {
+    throw new Error('Image must be smaller than 5 MB');
+  }
+
+  if (itemDescription !== undefined && typeof itemDescription !== 'string') {
+    throw new Error('itemDescription must be a string');
+  }
+
+  const description = typeof itemDescription === 'string' ? itemDescription.trim() : undefined;
+  if (description && description.length > MAX_DESCRIPTION_LENGTH) {
+    throw new Error(`itemDescription must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`);
+  }
+
+  return { imageData, itemDescription: description || undefined };
+};
+
+Deno.serve(async (request) => {
+  const origin = request.headers.get('origin');
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  }
+
+  if (request.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, origin, 405);
   }
 
   try {
-<<<<<<< HEAD
-    const { imageData, itemDescription } = await req.json();
-=======
-    console.log('📥 Parsing request body...');
-    const { imageData } = await req.json();
-    console.log('📊 Request parsed successfully, imageData length:', imageData?.length || 'undefined');
->>>>>>> 156c91104d5200e0a1fd743994d4f0b6f98b3139
-    
-    if (!imageData) {
-      console.error('❌ No image data provided in request');
-      return new Response(JSON.stringify({ error: 'No image data provided' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    await authenticateRequest(request);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'authentication_failed',
+      message: error instanceof Error ? error.message : 'Unknown authentication error',
+    }));
+    return jsonResponse({ error: 'Authentication required' }, origin, 401);
+  }
 
-    const googleCloudApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
-    const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-    
-    console.log('🔑 Checking API keys...');
-    console.log('🔧 GOOGLE_CLOUD_API_KEY present:', !!googleCloudApiKey);
-    console.log('🔧 GOOGLE_CLOUD_API_KEY length:', googleCloudApiKey?.length || 0);
-    console.log('🤖 OPENAI_API_KEY present:', !!openaiApiKey);
-    console.log('🤖 OPENAI_API_KEY length:', openaiApiKey?.length || 0);
-    
-    if (!googleCloudApiKey) {
-      console.error('❌ GOOGLE_CLOUD_API_KEY not found in environment variables');
-      return new Response(JSON.stringify({ error: 'Google Cloud API key not configured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+  let input: AnalyzeRequest;
+  try {
+    input = await parseRequest(request);
+  } catch (error) {
+    return jsonResponse(
+      { error: error instanceof Error ? error.message : 'Invalid request' },
+      origin,
+      400,
+    );
+  }
 
-    console.log('🔍 Starting vision analysis...');
-    
-    let visionAnalysis;
-    try {
-      visionAnalysis = await getEnhancedVisionAnalysis(imageData, googleCloudApiKey);
-      console.log('📊 Vision analysis complete:', {
-        labelsCount: visionAnalysis.labels.length,
-        objectsCount: visionAnalysis.objects.length,
-        textsCount: visionAnalysis.texts.length
-      });
-    } catch (visionError) {
-      console.error('💥 Vision analysis failed:', visionError);
-      throw visionError;
-    }
-    
-    let listing;
-    
-    // Try LLM generation first, fallback to deterministic
+  const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+
+  if (!geminiApiKey && !openaiApiKey) {
+    console.error(JSON.stringify({
+      event: 'configuration_error',
+      missing: 'GEMINI_API_KEY or OPENAI_API_KEY',
+    }));
+    return jsonResponse({ error: 'Image analysis is not configured' }, origin, 500);
+  }
+
+  try {
     if (openaiApiKey) {
       try {
-<<<<<<< HEAD
-        listing = await generateListingWithLLM(visionAnalysis, openaiApiKey, itemDescription);
-=======
-        console.log('🤖 Attempting LLM generation...');
-        listing = await generateListingWithLLM(visionAnalysis, openaiApiKey);
-        console.log('✅ LLM generation successful');
->>>>>>> 156c91104d5200e0a1fd743994d4f0b6f98b3139
+        const listing = await generateListingFromImage(
+          input.imageData,
+          openaiApiKey,
+          input.itemDescription,
+        );
+        logListingResult('openai-vision', listing);
+        return jsonResponse({
+          ...listing,
+          confidence: null,
+          analysisMethod: 'openai-vision',
+        }, origin);
       } catch (error) {
-        console.error('❌ LLM generation failed, falling back to deterministic:', error);
-        listing = generateListingDeterministic(visionAnalysis);
-        console.log('🔄 Using deterministic generation');
+        console.error(JSON.stringify({
+          event: 'vision_analysis_failed',
+          provider: 'openai',
+          message: error instanceof Error ? error.message : 'Unknown OpenAI error',
+        }));
+        if (!geminiApiKey) throw error;
       }
-    } else {
-      console.log('🔄 No OpenAI key, using deterministic generation');
-      listing = generateListingDeterministic(visionAnalysis);
     }
 
-    console.log('📝 Final listing generated:', {
-      title: listing.title,
-      category: listing.category,
-      price: listing.price,
-      descriptionLength: listing.description?.length || 0
-    });
+    if (!geminiApiKey) throw new Error('Gemini fallback is not configured');
 
-    const finalResponse = {
+    const listing = await generateListingWithGemini(
+      input.imageData,
+      geminiApiKey,
+      input.itemDescription,
+    );
+    logListingResult('gemini-vision', listing);
+    return jsonResponse({
       ...listing,
-      confidence: visionAnalysis.labels[0]?.score || 0.8,
-      analysisMethod: openaiApiKey ? 'llm' : 'deterministic'
-    };
-
-    console.log('✅ Sending successful response');
-    return new Response(JSON.stringify(finalResponse), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-
+      confidence: null,
+      analysisMethod: 'gemini-vision',
+    }, origin);
   } catch (error) {
-    console.error('💥 Error in analyze-image function:', error);
-    console.error('💥 Error name:', error.name);
-    console.error('💥 Error message:', error.message);
-    console.error('💥 Error stack:', error.stack);
-    
-    return new Response(JSON.stringify({ 
-      error: error.message,
-      errorType: error.name,
-      timestamp: new Date().toISOString()
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const message = error instanceof Error ? error.message : 'Unknown analysis error';
+    console.error(JSON.stringify({
+      event: 'analysis_failed',
+      message,
+    }));
+    return jsonResponse(
+      { error: 'Unable to analyze the image', details: message },
+      origin,
+      502,
+    );
   }
 });
 
-async function getEnhancedVisionAnalysis(imageData, apiKey) {
-  console.log('📡 Starting Google Vision API call...');
-  
-  const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
-  console.log('🖼️ Image data prepared, base64 length:', base64Image.length);
+async function generateListingWithGemini(
+  imageData: string,
+  apiKey: string,
+  itemDescription?: string,
+): Promise<Listing> {
+  const imageMatch = imageData.match(IMAGE_DATA_URL);
+  if (!imageMatch) throw new Error('Invalid image data');
 
-  const requestBody = {
-    requests: [{
-      image: { content: base64Image },
-      features: [
-        { type: 'LABEL_DETECTION', maxResults: 15 },
-        { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
-        { type: 'TEXT_DETECTION', maxResults: 10 },
-        { type: 'FACE_DETECTION', maxResults: 5 },
-        { type: 'LANDMARK_DETECTION', maxResults: 5 },
-        { type: 'SAFE_SEARCH_DETECTION' }
-      ]
-    }]
+  const response = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [
+            {
+              inline_data: {
+                mime_type: `image/${imageMatch[1]}`,
+                data: imageMatch[2],
+              },
+            },
+            {
+              text: `${itemDescription ? `Seller notes: ${itemDescription}\n\n` : ''}Identify the primary item being sold from the image and create an honest marketplace listing. Inspect the image directly. Do not invent a brand, model, material, included accessory, functionality, or condition that is not visible or stated by the seller. If the image only shows part of the item, describe only what can reasonably be identified. Use one category from: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles. Provide one concrete suggested asking price in US dollars formatted like $25; never return "Contact for price", "negotiable", "unknown", or a price range. Include exactly this sentence in the description: "Located in South Reno. Available for pickup or delivery for $20 delivery fee."`,
+            },
+          ],
+        }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1_024,
+          responseMimeType: 'application/json',
+          responseSchema: geminiListingSchema,
+        },
+      }),
+    },
+  );
+
+  const data = await response.json() as {
+    error?: { message?: string };
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
   };
-  
-  console.log('📤 Making Vision API request...');
+
+  if (!response.ok) {
+    throw new Error(
+      `Gemini request failed (${response.status}): ${data.error?.message ?? 'Unknown provider error'}`,
+    );
+  }
+
+  const content = data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? '')
+    .join('')
+    .trim();
+  if (!content) {
+    throw new Error(
+      `Gemini returned an empty response (${data.candidates?.[0]?.finishReason ?? 'unknown reason'})`,
+    );
+  }
+
+  const listing = parseListing(content);
+  if (!/^\$\d+(?:\.\d{2})?$/.test(listing.price)) {
+    throw new Error(`Gemini returned an invalid asking price: ${listing.price}`);
+  }
+
+  return listing;
+}
+
+async function getVisionAnalysis(imageData: string, apiKey: string): Promise<VisionAnalysis> {
+  const base64Image = imageData.slice(imageData.indexOf(',') + 1);
   const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify({
+      requests: [{
+        image: { content: base64Image },
+        features: [
+          { type: 'LABEL_DETECTION', maxResults: 15 },
+          { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
+          { type: 'TEXT_DETECTION', maxResults: 10 },
+          { type: 'SAFE_SEARCH_DETECTION' },
+        ],
+      }],
+    }),
   });
 
-  console.log('📥 Vision API response status:', response.status);
-  console.log('📥 Vision API response ok:', response.ok);
-
-  const data = await response.json();
-  console.log('📄 Vision API response data keys:', Object.keys(data));
-  
-  if (!response.ok) {
-    console.error('❌ Vision API error response:', data);
-    console.error('❌ Vision API error status:', response.status);
-    console.error('❌ Vision API error statusText:', response.statusText);
-    throw new Error(`Vision API error (${response.status}): ${JSON.stringify(data)}`);
-  }
-
-  console.log('✅ Vision API response successful');
-  console.log('📊 Response structure:', {
-    responses: data.responses?.length || 0,
-    firstResponse: data.responses?.[0] ? Object.keys(data.responses[0]) : 'none'
-  });
-
-  const result = data.responses[0];
-  const analysis = {
-    labels: result.labelAnnotations || [],
-    objects: result.localizedObjectAnnotations || [],
-    texts: result.textAnnotations || [],
-    faces: result.faceAnnotations || [],
-    landmarks: result.landmarkAnnotations || [],
-    safeSearch: result.safeSearchAnnotation
+  const data = await response.json() as {
+    error?: { message?: string };
+    responses?: Array<{
+      labelAnnotations?: VisionLabel[];
+      localizedObjectAnnotations?: VisionObject[];
+      textAnnotations?: VisionText[];
+      error?: { message?: string };
+    }>;
   };
 
-  console.log('📊 Final analysis counts:', {
-    labels: analysis.labels.length,
-    objects: analysis.objects.length,
-    texts: analysis.texts.length,
-    faces: analysis.faces.length,
-    landmarks: analysis.landmarks.length
-  });
+  const result = data.responses?.[0];
+  if (!response.ok || !result || result.error) {
+    const message = data.error?.message ?? result?.error?.message ?? 'Unknown provider error';
+    throw new Error(`Google Vision request failed (${response.status}): ${message}`);
+  }
 
-  return analysis;
+  console.info(JSON.stringify({
+    event: 'vision_analysis_complete',
+    provider: 'google-cloud-vision',
+    labels: (result.labelAnnotations ?? []).slice(0, 15).map((label) => ({
+      description: label.description,
+      score: Number(label.score.toFixed(4)),
+    })),
+    objects: (result.localizedObjectAnnotations ?? []).slice(0, 15).map((object) => ({
+      name: object.name,
+      score: typeof object.score === 'number' ? Number(object.score.toFixed(4)) : null,
+    })),
+    detectedText: (result.textAnnotations?.[0]?.description ?? '').slice(0, MAX_LOG_TEXT_LENGTH),
+  }));
+
+  return {
+    labels: result.labelAnnotations ?? [],
+    objects: result.localizedObjectAnnotations ?? [],
+    texts: result.textAnnotations ?? [],
+  };
 }
 
-<<<<<<< HEAD
-async function generateListingWithLLM(analysis: VisionAnalysis, apiKey: string, itemDescription?: string) {
-  const prompt = createEnhancedPrompt(analysis, itemDescription);
-=======
-async function generateListingWithLLM(analysis, apiKey) {
-  console.log('🤖 Starting LLM generation...');
-  const prompt = createEnhancedPrompt(analysis);
-  console.log('📝 Prompt created, length:', prompt.length);
->>>>>>> 156c91104d5200e0a1fd743994d4f0b6f98b3139
-  
+async function generateListingWithLLM(
+  analysis: VisionAnalysis,
+  apiKey: string,
+  itemDescription?: string,
+): Promise<Listing> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -217,303 +389,219 @@ async function generateListingWithLLM(analysis, apiKey) {
       messages: [
         {
           role: 'system',
-          content: `You are an expert at creating compelling marketplace listings (like Facebook Marketplace, Craigslist, etc.). 
-          Create listings that are honest, appealing, and likely to sell quickly. 
-          Always maintain a friendly, trustworthy tone. Focus on benefits and condition.
-          
-          IMPORTANT: Respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or additional text.
-          The JSON must contain exactly these fields: title, description, category, and estimatedPrice.`
+          content: 'Create an honest, appealing person-to-person marketplace listing using the required response schema.',
+        },
+        { role: 'user', content: createPrompt(analysis, itemDescription) },
+      ],
+      temperature: 0.7,
+      max_tokens: 800,
+      response_format: listingResponseFormat,
+    }),
+  });
+
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  if (!response.ok) {
+    throw new Error(`OpenAI request failed with status ${response.status}`);
+  }
+
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('OpenAI returned an empty response');
+  }
+
+  return parseListing(
+    content,
+    analysis.labels.slice(0, 5).map((label) => label.description),
+  );
+}
+
+async function generateListingFromImage(
+  imageData: string,
+  apiKey: string,
+  itemDescription?: string,
+): Promise<Listing> {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'Create an honest, appealing person-to-person marketplace listing using the required response schema.',
         },
         {
           role: 'user',
-          content: prompt
-        }
+          content: [
+            {
+              type: 'text',
+              text: `${itemDescription ? `Seller notes: ${itemDescription}\n\n` : ''}Analyze this item and create a marketplace listing. Use one of these categories: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles. Always include: "Located in South Reno. Available for pickup or delivery for $20 delivery fee."`,
+            },
+            { type: 'image_url', image_url: { url: imageData, detail: 'low' } },
+          ],
+        },
       ],
       temperature: 0.7,
-      max_tokens: 800
-    })
+      max_tokens: 800,
+      response_format: listingResponseFormat,
+    }),
   });
 
-  console.log('🤖 OpenAI response status:', response.status);
-  const data = await response.json();
-  console.log('🤖 OpenAI response received');
-  
+  const data = await response.json() as {
+    error?: { message?: string };
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
   if (!response.ok) {
-    console.error('❌ OpenAI API error:', data);
-    throw new Error(`OpenAI API error: ${JSON.stringify(data)}`);
+    throw new Error(
+      `OpenAI vision request failed (${response.status}): ${data.error?.message ?? 'Unknown provider error'}`,
+    );
   }
 
-  try {
-    const content = data.choices[0].message.content;
-    console.log('📄 Raw OpenAI response:', content);
-    
-    const cleanedContent = cleanJsonResponse(content);
-    console.log('🧹 Cleaned OpenAI response:', cleanedContent);
-    
-    const parsed = JSON.parse(cleanedContent);
-    console.log('✅ Successfully parsed OpenAI response');
-    
-    // Validate required fields
-    if (!parsed.title || !parsed.description || !parsed.category || !parsed.estimatedPrice) {
-      console.error('❌ Missing required fields in OpenAI response:', {
-        title: !!parsed.title,
-        description: !!parsed.description,
-        category: !!parsed.category,
-        estimatedPrice: !!parsed.estimatedPrice
-      });
-      throw new Error('Missing required fields in OpenAI response');
-    }
-    
-    return {
-      title: parsed.title,
-      description: parsed.description,
-      category: parsed.category,
-      price: parsed.estimatedPrice,
-      detectedItems: analysis.labels.slice(0, 5).map(l => l.description)
-    };
-  } catch (parseError) {
-    console.error('💥 Parse error details:', parseError);
-    console.error('📄 Content that failed to parse:', data.choices[0].message.content);
-    throw new Error(`Failed to parse LLM response: ${parseError.message}`);
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('OpenAI vision returned an empty response');
+
+  return parseListing(content);
+}
+
+function parseListing(content: string, fallbackDetectedItems: string[] = []): Listing {
+  const parsed = JSON.parse(content) as Record<string, unknown>;
+  const price = parsed.price ?? parsed.estimatedPrice ?? parsed.estimated_price;
+  const required = [parsed.title, parsed.description, parsed.category, price];
+  if (required.some((field) => typeof field !== 'string' || !field)) {
+    throw new Error('OpenAI response is missing required fields');
   }
+
+  const detectedItems = Array.isArray(parsed.detectedItems)
+    ? parsed.detectedItems.filter((item): item is string => typeof item === 'string').slice(0, 5)
+    : fallbackDetectedItems;
+
+  return {
+    title: parsed.title as string,
+    description: parsed.description as string,
+    category: parsed.category as string,
+    price: price as string,
+    detectedItems,
+  };
 }
 
-function cleanJsonResponse(content) {
-  // Remove markdown code block syntax
-  return content
-    .replace(/```json\s*/g, '')
-    .replace(/```\s*/g, '')
-    .trim();
+function logListingResult(
+  pipeline: 'gemini-vision' | 'openai-vision' | 'openai-from-google-vision' | 'deterministic-from-google-vision',
+  listing: Listing,
+) {
+  console.info(JSON.stringify({
+    event: 'listing_generation_complete',
+    pipeline,
+    title: listing.title.slice(0, MAX_LOG_TEXT_LENGTH),
+    description: listing.description.slice(0, MAX_LOG_TEXT_LENGTH),
+    category: listing.category,
+    price: listing.price,
+    detectedItems: listing.detectedItems,
+  }));
 }
 
-<<<<<<< HEAD
-function createEnhancedPrompt(analysis: VisionAnalysis, itemDescription?: string): string {
-=======
-function createEnhancedPrompt(analysis) {
->>>>>>> 156c91104d5200e0a1fd743994d4f0b6f98b3139
-  const labels = analysis.labels.slice(0, 10).map(l => 
-    `${l.description} (confidence: ${(l.score * 100).toFixed(1)}%)`
-  );
-  
-  const objects = analysis.objects.slice(0, 8).map(o => o.name);
-  
-  const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
-  
-  const brands = extractBrands(detectedText);
-  const colors = extractColorsImproved(analysis.labels);
-  const materials = extractMaterials(analysis.labels);
-  
-  console.log('Color extraction debug:', {
-    rawLabels: analysis.labels.slice(0, 10).map(l => l.description),
-    extractedColors: colors,
-    materials: materials
-  });
-  
-  // Start with user description if provided
-  const userDescriptionSection = itemDescription 
-    ? `USER DESCRIPTION: "${itemDescription}"
+function createPrompt(analysis: VisionAnalysis, itemDescription?: string): string {
+  const labels = analysis.labels
+    .slice(0, 10)
+    .map((label) => `${label.description} (${(label.score * 100).toFixed(1)}%)`);
+  const objects = analysis.objects.slice(0, 8).map((object) => object.name);
+  const detectedText = analysis.texts[0]?.description ?? '';
 
-`
-    : '';
-  
-  return `${userDescriptionSection}Create a marketplace listing for an item based on this AI vision analysis:
+  return `${itemDescription ? `SELLER NOTES: ${itemDescription}\n\n` : ''}Create a marketplace listing from this image analysis.
 
-DETECTED LABELS: ${labels.join(', ')}
+Labels: ${labels.join(', ')}
+Objects: ${objects.join(', ')}
+Visible text: ${detectedText}
 
-DETECTED OBJECTS: ${objects.join(', ')}
-
-DETECTED TEXT: "${detectedText}"
-
-DETECTED BRANDS: ${brands.length > 0 ? brands.join(', ') : 'None detected'}
-
-COLORS: ${colors.length > 0 ? colors.join(', ') : 'Please infer likely colors from the item type'}
-
-MATERIALS: ${materials.join(', ')}
-
-ADDITIONAL CONTEXT:
-- This is for a person-to-person marketplace (like Facebook Marketplace)
-- Focus on condition, functionality, and appeal to buyers
-- ALWAYS include: "Located in South Reno. Available for pickup or delivery for $20 delivery fee."
-- Be honest about condition while highlighting positives
-- If no clear colors were detected, please infer likely colors based on the item type and common variants
-- Suggest appropriate category from: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles
-${itemDescription ? '- Incorporate relevant details from the user description provided above' : ''}
-
-Create a compelling listing that would attract buyers while being truthful.`;
+Use one of these categories: Baby & Kids, Electronics, Home & Garden, Clothing, Sports, Books & Media, Vehicles, Tools, Collectibles.
+Always include: "Located in South Reno. Available for pickup or delivery for $20 delivery fee."`;
 }
 
-function extractBrands(text) {
+function extractBrands(text: string): string[] {
   const brands = [
     'Apple', 'Samsung', 'Nike', 'Adidas', 'IKEA', 'Fisher-Price', 'Sony', 'LG',
     'Microsoft', 'Dell', 'HP', 'Canon', 'Nikon', 'Toyota', 'Honda', 'Ford',
     'Lego', 'Barbie', 'Disney', 'Nintendo', 'PlayStation', 'Xbox', 'Target',
-    'Walmart', 'Amazon', 'Google', 'Facebook', 'Instagram', 'TikTok'
+    'Walmart', 'Amazon', 'Google', 'Facebook', 'Instagram', 'TikTok',
   ];
-  
-  return brands.filter(brand => 
-    text.toLowerCase().includes(brand.toLowerCase())
-  );
+  return brands.filter((brand) => text.toLowerCase().includes(brand.toLowerCase()));
 }
 
-function extractColorsImproved(labels) {
-  // Define pure color words that we want to match
-  const pureColors = [
-    'red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 
-    'black', 'white', 'gray', 'grey', 'brown', 'beige', 'tan', 'navy',
-    'turquoise', 'cyan', 'magenta', 'maroon', 'olive', 'lime', 'teal'
-  ];
-  
-  // Materials/finishes that are often confused with colors
-  const materialsToExclude = [
-    'silver', 'gold', 'bronze', 'copper', 'metallic', 'chrome', 'steel',
-    'aluminum', 'brass', 'platinum', 'iron'
-  ];
-  
-  const detectedColors = [];
-  
-  for (const label of labels) {
-    const description = label.description.toLowerCase();
-    const confidence = label.score;
-    
-    // Only consider labels with decent confidence
-    if (confidence < 0.6) continue;
-    
-    // Check for pure color matches
-    for (const color of pureColors) {
-      // Look for color as a standalone word or at the beginning of a compound word
-      const colorRegex = new RegExp(`\\b${color}\\b|^${color}(?=[A-Z]|\\s)`, 'i');
-      
-      if (colorRegex.test(description)) {
-        // Additional check: make sure it's not part of a material description
-        const isPartOfMaterial = materialsToExclude.some(material => 
-          description.includes(`${color} ${material}`) || 
-          description.includes(`${material} ${color}`)
-        );
-        
-        if (!isPartOfMaterial && !detectedColors.includes(color)) {
-          detectedColors.push(color);
-          console.log(`Found color "${color}" in label "${description}" with confidence ${confidence}`);
-        }
-      }
-    }
-  }
-  
-  return detectedColors.slice(0, 3);
-}
+function generateListingDeterministic(analysis: VisionAnalysis): Listing {
+  const detectedItems = analysis.labels.slice(0, 5).map((label) => label.description);
+  const detectedText = analysis.texts[0]?.description ?? '';
+  const category = determineCategory(detectedItems);
 
-function extractMaterials(labels) {
-  const materials = ['wood', 'metal', 'plastic', 'glass', 'fabric', 'leather', 
-                    'ceramic', 'paper', 'cardboard', 'stone', 'rubber'];
-  
-  return labels
-    .map(l => l.description.toLowerCase())
-    .filter(desc => materials.some(material => desc.includes(material)))
-    .slice(0, 3);
-}
-
-// Fallback deterministic generation
-function generateListingDeterministic(analysis) {
-  console.log('⚙️ Using deterministic generation');
-  const detectedItems = analysis.labels.slice(0, 5).map(l => l.description);
-  const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
-  
-  const listing = {
+  return {
     title: generateTitle(detectedItems, detectedText),
-    description: generateEnhancedDescription(analysis),
-    category: determineCategory(detectedItems),
-    price: estimatePrice(determineCategory(detectedItems), detectedItems),
-    detectedItems
+    description: generateDescription(analysis),
+    category,
+    price: estimatePrice(category),
+    detectedItems,
   };
-
-  console.log('⚙️ Deterministic listing created:', {
-    title: listing.title,
-    category: listing.category,
-    price: listing.price
-  });
-
-  return listing;
 }
 
-function generateEnhancedDescription(analysis) {
+function generateDescription(analysis: VisionAnalysis): string {
   const mainItem = analysis.labels[0]?.description || 'item';
-  const features = analysis.labels.slice(1, 4).map(l => l.description).join(', ');
-  const detectedText = analysis.texts.length > 0 ? analysis.texts[0].description : '';
-  
+  const features = analysis.labels.slice(1, 4).map((label) => label.description).join(', ');
+  const detectedText = analysis.texts[0]?.description ?? '';
   let description = `This ${mainItem.toLowerCase()} is in great condition and ready for its next home! `;
-  
-  if (features) {
-    description += `Notable features include ${features}. `;
-  }
-  
-  if (detectedText && detectedText.length > 10) {
-    const brands = extractBrands(detectedText);
-    if (brands.length > 0) {
-      description += `Brand: ${brands[0]}. `;
-    }
-  }
-  
-  // Add condition indicators based on analysis confidence
-  const avgConfidence = analysis.labels.slice(0, 3).reduce((acc, l) => acc + l.score, 0) / Math.min(3, analysis.labels.length);
-  
-  if (avgConfidence > 0.9) {
-    description += `Excellent condition with clear details visible. `;
-  } else if (avgConfidence > 0.7) {
-    description += `Good condition with normal signs of use. `;
-  }
-  
-  description += `From a clean, smoke-free home. Located in South Reno. Available for pickup or delivery for $20 delivery fee. Happy to answer questions or provide additional photos.`;
-  
+
+  if (features) description += `Notable features include ${features}. `;
+  const brand = extractBrands(detectedText)[0];
+  if (brand) description += `Brand: ${brand}. `;
+
+  description += 'From a clean, smoke-free home. Located in South Reno. Available for pickup or delivery for $20 delivery fee. Happy to answer questions or provide additional photos.';
   return description;
 }
 
-function generateTitle(items, text) {
+function generateTitle(items: string[], text: string): string {
   const mainItem = items[0] || 'Item';
   const brand = extractBrands(text)[0];
-  const condition = 'Great Condition';
-  
-  if (brand) {
-    return `${brand} ${mainItem} - ${condition}`;
-  }
-  return `${mainItem} - ${condition} - Must See!`;
+  return brand
+    ? `${brand} ${mainItem} - Great Condition`
+    : `${mainItem} - Great Condition - Must See!`;
 }
 
-function determineCategory(items) {
-  const categories = {
+function determineCategory(items: string[]): string {
+  const categories: Record<string, string[]> = {
     'Baby & Kids': ['toy', 'baby', 'child', 'kid', 'infant', 'toddler', 'stroller', 'crib', 'doll', 'game'],
-    'Electronics': ['phone', 'computer', 'laptop', 'tablet', 'electronic', 'device', 'camera', 'headphone', 'speaker'],
+    Electronics: ['phone', 'computer', 'laptop', 'tablet', 'electronic', 'device', 'camera', 'headphone', 'speaker'],
     'Home & Garden': ['furniture', 'chair', 'table', 'lamp', 'vase', 'plant', 'kitchen', 'home', 'decor', 'appliance'],
-    'Clothing': ['shirt', 'pants', 'dress', 'shoe', 'clothing', 'apparel', 'fashion', 'jacket', 'hat'],
-    'Sports': ['ball', 'sport', 'equipment', 'fitness', 'exercise', 'bike', 'bicycle', 'golf', 'tennis'],
+    Clothing: ['shirt', 'pants', 'dress', 'shoe', 'clothing', 'apparel', 'fashion', 'jacket', 'hat'],
+    Sports: ['ball', 'sport', 'equipment', 'fitness', 'exercise', 'bike', 'bicycle', 'golf', 'tennis'],
     'Books & Media': ['book', 'magazine', 'cd', 'dvd', 'media', 'novel', 'textbook'],
-    'Vehicles': ['car', 'truck', 'motorcycle', 'vehicle', 'auto', 'boat'],
-    'Tools': ['tool', 'hammer', 'drill', 'saw', 'wrench', 'equipment'],
-    'Collectibles': ['collectible', 'vintage', 'antique', 'rare', 'signed']
+    Vehicles: ['car', 'truck', 'motorcycle', 'vehicle', 'auto', 'boat'],
+    Tools: ['tool', 'hammer', 'drill', 'saw', 'wrench', 'equipment'],
+    Collectibles: ['collectible', 'vintage', 'antique', 'rare', 'signed'],
   };
 
   for (const [category, keywords] of Object.entries(categories)) {
-    if (items.some(item => keywords.some(keyword => 
-      item.toLowerCase().includes(keyword.toLowerCase())
-    ))) {
+    if (items.some((item) => keywords.some((keyword) => item.toLowerCase().includes(keyword)))) {
       return category;
     }
   }
-  
   return 'Home & Garden';
 }
 
-function estimatePrice(category, items) {
-  const priceRanges = {
+function estimatePrice(category: string): string {
+  const prices: Record<string, string[]> = {
     'Baby & Kids': ['$10', '$20', '$35', '$50'],
-    'Electronics': ['$25', '$75', '$150', '$300'],
+    Electronics: ['$25', '$75', '$150', '$300'],
     'Home & Garden': ['$15', '$35', '$65', '$100'],
-    'Clothing': ['$8', '$15', '$25', '$40'],
-    'Sports': ['$20', '$45', '$75', '$120'],
+    Clothing: ['$8', '$15', '$25', '$40'],
+    Sports: ['$20', '$45', '$75', '$120'],
     'Books & Media': ['$3', '$8', '$15', '$25'],
-    'Vehicles': ['$500', '$1500', '$3500', '$8000'],
-    'Tools': ['$15', '$35', '$75', '$150'],
-    'Collectibles': ['$20', '$50', '$100', '$250']
+    Vehicles: ['$500', '$1500', '$3500', '$8000'],
+    Tools: ['$15', '$35', '$75', '$150'],
+    Collectibles: ['$20', '$50', '$100', '$250'],
   };
-
-  const prices = priceRanges[category] || priceRanges['Home & Garden'];
-  return prices[Math.floor(Math.random() * prices.length)];
+  const range = prices[category] ?? prices['Home & Garden'];
+  return range[Math.floor(Math.random() * range.length)];
 }
