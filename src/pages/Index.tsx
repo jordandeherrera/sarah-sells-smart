@@ -9,7 +9,66 @@ import { toast } from '@/hooks/use-toast';
 import { createSupabaseClient } from '@/integrations/supabase/client';
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
-const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const TARGET_IMAGE_SIZE_BYTES = 4.5 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 1600;
+const MIN_JPEG_QUALITY = 0.6;
+const SUPPORTED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+]);
+
+const getDataUrlSize = (dataUrl: string) => {
+  const base64 = dataUrl.split(',')[1] ?? '';
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+};
+
+const loadImageFromFile = (file: File) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Unable to load image'));
+    };
+
+    image.src = objectUrl;
+  });
+
+const resizeImageToDataUrl = async (file: File) => {
+  const image = await loadImageFromFile(file);
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Unable to optimize image');
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.drawImage(image, 0, 0, width, height);
+
+  let quality = 0.85;
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+
+  while (getDataUrlSize(dataUrl) > TARGET_IMAGE_SIZE_BYTES && quality > MIN_JPEG_QUALITY) {
+    quality = Math.max(MIN_JPEG_QUALITY, quality - 0.1);
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+  }
+
+  return dataUrl;
+};
 
 const Index = () => {
   const { session } = useSession();
@@ -28,34 +87,43 @@ const Index = () => {
   } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
         toast({
           title: 'Unsupported image',
-          description: 'Please choose a JPEG, PNG, or WebP image.',
+          description: 'Please choose a JPEG, PNG, WebP, HEIC, or HEIF image.',
           variant: 'destructive',
         });
         event.target.value = '';
         return;
       }
 
-      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      let imageData: string;
+      try {
+        imageData = await resizeImageToDataUrl(file);
+      } catch {
+        toast({
+          title: 'Could not read image',
+          description: 'Please choose a different photo and try again.',
+          variant: 'destructive',
+        });
+        event.target.value = '';
+        return;
+      }
+
+      if (getDataUrlSize(imageData) > MAX_IMAGE_SIZE_BYTES) {
         toast({
           title: 'Image is too large',
-          description: 'Please choose an image smaller than 5 MB.',
+          description: 'Please choose a smaller photo or crop it before uploading.',
           variant: 'destructive',
         });
         event.target.value = '';
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setSelectedImage(e.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+      setSelectedImage(imageData);
     }
   };
 

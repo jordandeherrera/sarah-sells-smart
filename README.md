@@ -124,8 +124,8 @@ The Worker name in Cloudflare must remain `sarah-sells-smart` to match `wrangler
 ## Request limits
 
 - Signed-in Clerk session required
-- JPEG, PNG, and WebP images only
-- Maximum source image size: 5 MB
+- JPEG, PNG, WebP, HEIC, and HEIF uploads are accepted by the frontend
+- Images are resized and compressed before analysis; analyzed image payloads must be 5 MB or smaller
 - Maximum optional description length: 1,000 characters
 
 ## License
